@@ -12,7 +12,7 @@
 //  USER_AGENT   : the EXACT User-Agent of the browser the cookie came from (console: navigator.userAgent)
 //  WARNING      : if the repository is public, anyone can read the cookie; it only works from your IP + that User-Agent.
 // ============================================================================================================================
-var CF_CLEARANCE = '__CF_CLEARANCE__';
+var CF_CLEARANCE = 'CugeXaB8ZTZDbj_SGYrPzqhAMrKc3ZNFYCet9Ir8Kl8J62-zQc1_iZwzJ0_wqKCjt6b9K_oJi05EK_KRTgbzr3ZhbZRzOtFvFH6QKVIXXK5FzaKi5ivG4FVQoBsNyjJ7k4qir4fWwMMyLGd64g8WlTp5Qdj1R8fhknL13f-sPRgWZqKPoWYiIx3veh1sO-K_ABZRwKILo03xJS6HRAwq7_fs0UlRN9rOhtI6UkoTPBNMClGSAXTQVoufbPX_OKlq5xCIYn1bvQM63jqnQvFXrsQihLk4AEwQ3vgQbFHHd1tQqOE54gdSWal_yi4lHfBS5880vdIb9rk7dTf_mcY8Y68dMiXnsd2mjv0y2S3q-84aqTDzrT7-GP3xYE6U';
 var USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36';
 // ============================================================================================================================
 
