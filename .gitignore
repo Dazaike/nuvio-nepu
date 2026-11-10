@@ -1,2 +1,5 @@
 .secrets/
 node_modules/
+addon/cache/
+addon/config.json
+probe*.js

@@ -4,13 +4,32 @@ Nuvio local-scraper repository for [nepu.is](https://nepu.is). One provider, `ne
 For a title it returns the Full HD upload, the separate `[4K]` upload when nepu has one, and any extra uploads of the same title
 (numbered `Full HD (2)`, `4K (2)`, ...).
 
-## Why a plugin and not an addon
+## Plugin or addon
 
 nepu.is is behind a Cloudflare managed challenge. Passing it sets an HttpOnly `cf_clearance` cookie, valid about a year, **bound to the
 public IP it was issued to** and to the browser's User-Agent. Replayed from a datacenter IP it is rejected: tested from Vercel
 (egress 54.234.84.57), the request with the cookie got the same `403 cf-mitigated: challenge` as a request without it. So a hosted
-addon cannot work; the provider has to run on a device on the same network the cookie came from. (An addon served from a PC on that
-same home network would work, but needs that PC on.)
+(Vercel etc.) addon cannot work; whatever talks to nepu.is has to sit on the home network the cookie came from.
+
+Two ways to run it, same code:
+
+* **Plugin** (`providers/nepu.js`): runs inside Nuvio. Every open is 4 requests in a row (TMDB, search, page, embed), about 2 s on a PC and
+  ~15 s measured on the TV.
+* **Addon** (`addon/server.js`): a small Node server on a device at home. Nuvio makes one request to it; it loads `providers/nepu.js`
+  unchanged and caches the stable lookups on disk (TMDB 30 d, nepu search and title pages 12 h), so a repeat open only needs the
+  `/ajax/embed` request. Measured on a PC: cold about 2 s, warm about 0.55 s.
+
+### Addon on the TV box (Termux)
+
+    pkg install nodejs git
+    git clone https://github.com/Dazaike/nuvio-nepu
+    cd nuvio-nepu && termux-wake-lock && node addon/server.js
+
+Then in Nuvio add the addon `http://127.0.0.1:7861/manifest.json` (same device) or `http://<device LAN IP>:7861/manifest.json` from another
+device. Update with `git pull`. Optional `addon/config.json`: `{"cf_clearance": "...", "user_agent": "...", "port": 7861}` overrides the
+values in `providers/nepu.js`. Nuvio sends `tt...` or `tmdb:...` ids; both work. Test: `node test/addon-test.js [baseUrl]`.
+
+Cached pages that stop yielding a player are dropped and retried live automatically; delete `addon/cache/` to reset everything.
 
 ## The cookie (read this)
 
