@@ -47,9 +47,10 @@ async function play(s) {
   for (const [name, args] of cases) {
     logs.length = 0;
     const t0 = Date.now();
-    const out = await getStreams.apply(null, args);
+    const all = await getStreams.apply(null, args);
+    const diag = all.filter(s => s.quality === 'ERROR'), out = all.filter(s => s.quality !== 'ERROR');
     const ms = Date.now() - t0;
-    if (!out.length) { rows.push([name, 'NO STREAM', '', ms]); console.log('\n---', name, '\n' + logs.join('\n')); continue; }
+    if (!out.length) { rows.push([name, 'NO STREAM', diag.map(d => d.name).join('<br>'), ms]); console.log('\n---', name, '\n' + logs.join('\n')); continue; }
     const results = [];
     for (const s of out) { const p = await play(s); results.push(s.name + ': ' + (p.ok ? 'PASS ' : 'FAIL ') + p.steps.join(', ')); if (p.ok) pass++; expected++; }
     rows.push([name, out.length + ' stream(s)', results.join('<br>'), ms]);

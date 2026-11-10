@@ -35,6 +35,12 @@ function withTimeout(p, ms, what) {
   });
 }
 
+// When nothing can be returned, hand back visible "Nepu ERROR: ..." rows so the app shows WHY (Nuvio only displays returned streams, not
+// console logs). Set DIAGNOSTICS = false once everything works.
+var DIAGNOSTICS = true;
+var problems = [];
+function problem(msg) { problems.push(msg); log('PROBLEM', msg); }
+
 function siteHeaders(extra) {
   var h = { 'User-Agent': USER_AGENT, 'Accept': '*/*', 'Cookie': 'cf_clearance=' + CF_CLEARANCE };
   for (var k in extra) if (extra.hasOwnProperty(k)) h[k] = extra[k];
@@ -47,8 +53,12 @@ function siteFetch(url, opts, what) {
   if (opts.body != null) o.body = opts.body;
   return withTimeout(fetch(url, o), REQUEST_TIMEOUT_MS, what || url).then(function (r) {
     log('HTTP', r.status, what || url);
-    if (r.status === 403) log('403 from nepu.is: CF_CLEARANCE expired / other IP / wrong USER_AGENT (enter new values in the app: Plugins > Nepu > Settings)');
+    if (r.status === 403) problem('403 Cloudflare rejected the cookie (' + (what || url) + ')');
+    else if (!r.ok) problem('HTTP ' + r.status + ' on ' + (what || url));
     return r;
+  }, function (e) {
+    problem('network error on ' + (what || url) + ': ' + String(e && e.message || e));
+    throw e;
   });
 }
 
@@ -200,29 +210,48 @@ function applyAppSettings() {
   if (typeof s.user_agent === 'string' && s.user_agent) USER_AGENT = s.user_agent;
 }
 
+function diagRow(text) {
+  return { name: text, title: text, description: text, url: SITE + '/', quality: 'ERROR', headers: {}, subtitles: [] };
+}
+
+function textOrQ(url) {
+  return withTimeout(fetch(url), 6000, url).then(function (r) { return r.text(); }).then(function (t) { return String(t).replace(/\s+/g, ' ').slice(0, 60); }).catch(function () { return '?'; });
+}
+
+// which address does this device really use on the internet? (the Cloudflare cookie only works from the address that earned it)
+function diagnose() {
+  var why = problems.length ? problems.slice(0, 3) : ['no streams and no error (unknown reason)'];
+  return Promise.all([textOrQ('https://api.ipify.org'), textOrQ('https://api64.ipify.org')]).then(function (ips) {
+    var rows = why.map(function (w) { return diagRow('Nepu ERROR: ' + w); });
+    rows.push(diagRow('Nepu INFO: this device reaches the internet as IPv4 ' + ips[0] + ' / preferred ' + ips[1]));
+    return rows;
+  });
+}
+
 function fetchStreams(tmdbId, mediaType, season, episode) {
   T0 = Date.now();
+  problems = [];
   applyAppSettings();
   log('getStreams', tmdbId, mediaType, season, episode);
-  if (!CF_CLEARANCE || CF_CLEARANCE.indexOf('__') === 0) { log('CF_CLEARANCE is not set: enter it in the app (Plugins > Nepu > Settings) or see the top of providers/nepu.js'); return Promise.resolve([]); }
+  if (!CF_CLEARANCE || CF_CLEARANCE.indexOf('__') === 0) { problem('CF_CLEARANCE is not set'); return DIAGNOSTICS ? diagnose() : Promise.resolve([]); }
   var isTv = mediaType === 'tv';
 
   return tmdbInfo(tmdbId, mediaType).then(function (info) {
-    if (!info) { log('TMDB lookup failed'); return []; }
+    if (!info) { problem('TMDB lookup failed for id ' + tmdbId); return []; }
     log('tmdb', JSON.stringify(info));
     return findPages(info, mediaType).then(function (pages) {
-      if (!pages.length) { log('no nepu entry for', JSON.stringify(info.titles), info.year); return []; }
+      if (!pages.length) { problem('no nepu entry for ' + JSON.stringify(info.titles) + ' ' + info.year); return []; }
       var perTier = {};   // nepu keeps several uploads of one title: number them per tier ("Full HD", "Full HD (2)", ...)
       pages.forEach(function (p) { var t = p.tag === '4K' ? '4K' : 'HD'; perTier[t] = (perTier[t] || 0) + 1; p.n = perTier[t]; });
       return Promise.all(pages.map(function (p) {
         var pageUrl = isTv ? p.url + '/season/' + (season || 1) + '/episode/' + (episode || 1) : p.url;
         return siteText(pageUrl, null, 'page ' + pageUrl.replace(SITE, '')).then(function (html) {
           var ids = embedIds(html);
-          if (!ids.length) { log('no player on', pageUrl.replace(SITE, '')); return []; }
+          if (!ids.length) { problem('no player on ' + pageUrl.replace(SITE, '')); return []; }
           var label = (p.tag === '4K' ? '4K' : (sourceLabel(html) || 'Full HD')) + (p.n > 1 ? ' (' + p.n + ')' : '');
           return Promise.all(ids.map(function (id) {
             return relayUrl(id, pageUrl).then(function (url) {
-              if (!url) { log('no relay url for embed', id); return null; }
+              if (!url) { problem('no relay url for embed ' + id); return null; }
               return deliver(url, { label: label, p: p, info: info, isTv: isTv, season: season, episode: episode });
             });
           }));
@@ -234,7 +263,8 @@ function fetchStreams(tmdbId, mediaType, season, episode) {
         return out;
       });
     });
-  }).catch(function (e) { log('FATAL', String(e && e.message || e)); return []; });
+  }).catch(function (e) { problem('FATAL ' + String(e && e.message || e)); return []; })
+    .then(function (out) { return out.length || !DIAGNOSTICS ? out : diagnose(); });
 }
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { getStreams: getStreams, _internals: { parseCaption: parseCaption, parseResults: parseResults, pickMatches: pickMatches, norm: norm, embedIds: embedIds } };

@@ -1,13 +1,13 @@
 {
   "name": "Nepu",
   "author": "local",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "scrapers": [
     {
       "id": "nepu",
       "name": "Nepu",
       "description": "Movies and TV via nepu.is (HLS): Full HD plus the separate 4K upload when there is one. Needs your own cf_clearance cookie, see providers/nepu.js",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "local",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/nepu.js",
