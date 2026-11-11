@@ -10,7 +10,9 @@
 'use strict';
 const http = require('http'), fs = require('fs'), path = require('path'), vm = require('vm'), zlib = require('zlib'), crypto = require('crypto'), os = require('os');
 // The Cloudflare cookie belongs to the home IPv4 address. Without this, Node can reach nepu.is over IPv6 on a dual-stack network and get a 403.
+// Two settings are needed: IPv4 first in DNS order, AND no happy-eyeballs race (otherwise a slow IPv4 connect lets an IPv6 attempt win).
 require('dns').setDefaultResultOrder('ipv4first');
+require('net').setDefaultAutoSelectFamily(false);
 
 const PROVIDER = path.join(__dirname, '..', 'providers', 'nepu.js');
 let cfg = {};
