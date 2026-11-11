@@ -227,20 +227,56 @@ function rewriteSegments(text, origin) {
   if (direct) console.log('    warning: ' + direct + ' playlist line(s) did not match the CDN pattern and were left pointing at the CDN');
   return out;
 }
-function proxySegment(req, res, host, payload) {
+// The CDN answers 429 when one IP opens many segment requests at once (12 parallel reads: 5 got 429), so at most SEG_MAX upstream requests run
+// at a time; the rest queue. A 429/503 is retried with a short backoff; a stalled attempt (10 s of silence) or a reset connection is retried
+// on a fresh connection. All of this only while nothing has been sent to the player yet.
+const SEG_MAX = 3;
+let segActive = 0;
+const segQueue = [];
+function segAcquire() {
+  return new Promise(resolve => {
+    const go = () => {
+      segActive++;
+      let released = false;
+      resolve(() => { if (released) return; released = true; segActive--; const next = segQueue.shift(); if (next) next(); });
+    };
+    if (segActive < SEG_MAX) go(); else segQueue.push(go);
+  });
+}
+async function proxySegment(req, res, host, payload) {
   if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.maho-cdn\.com$/.test(host) || !/^[A-Za-z0-9._~-]+$/.test(payload)) return send(res, 400, 'bad segment');
   const headers = {};
   if (req.headers.range) headers.Range = req.headers.range;
-  const up = https.request({ host, path: '/cdn-m3u8?payload=' + payload, method: req.method === 'HEAD' ? 'HEAD' : 'GET', agent: segAgent, headers }, ur => {
-    const h = { 'Cache-Control': 'no-store' };
-    for (const k of ['content-type', 'content-length', 'content-range', 'accept-ranges']) if (ur.headers[k]) h[k] = ur.headers[k];
-    res.writeHead(ur.statusCode, h);
-    ur.pipe(res);
-  });
-  up.setTimeout(30000, () => up.destroy(new Error('timeout')));
-  up.on('error', e => { if (!res.headersSent) send(res, 502, 'upstream ' + (e.code || e.message)); else res.destroy(); });
-  res.on('close', () => { if (!res.writableFinished) up.destroy(); });
-  up.end();
+  const release = await segAcquire();
+  if (res.destroyed) return release();
+  let cur = null, finished = false;
+  const done = () => { if (!finished) { finished = true; release(); } };
+  res.on('close', () => { if (!res.writableFinished && cur) cur.destroy(); done(); });
+  (function attempt(n) {
+    let gotResponse = false;
+    const up = cur = https.request({ host, path: '/cdn-m3u8?payload=' + payload, method: req.method === 'HEAD' ? 'HEAD' : 'GET', agent: segAgent, family: 4, headers }, ur => {
+      gotResponse = true;
+      if ((ur.statusCode === 429 || ur.statusCode === 503) && n < 3 && !res.headersSent) {
+        ur.resume();
+        const wait = Math.min(2000, (+ur.headers['retry-after'] || 0) * 1000 || 300 * (n + 1));
+        console.log('    segment upstream ' + ur.statusCode + ' on ' + host + ', retry ' + (n + 1) + ' in ' + wait + ' ms');
+        return setTimeout(() => { if (!res.destroyed) attempt(n + 1); }, wait);
+      }
+      up.setTimeout(20000);
+      const h = { 'Cache-Control': 'no-store' };
+      for (const k of ['content-type', 'content-length', 'content-range', 'accept-ranges']) if (ur.headers[k]) h[k] = ur.headers[k];
+      res.writeHead(ur.statusCode, h);
+      ur.pipe(res);
+      ur.on('error', () => res.destroy());
+    });
+    up.setTimeout(10000, () => up.destroy(new Error('timeout')));
+    up.on('error', e => {
+      if (res.headersSent || res.destroyed) return res.destroy();
+      if (!gotResponse && n < 3) { console.log('    segment upstream ' + (e.code || e.message) + ' on ' + host + ', retry ' + (n + 1)); return attempt(n + 1); }
+      send(res, 502, 'upstream ' + (e.code || e.message));
+    });
+    up.end();
+  })(0);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
