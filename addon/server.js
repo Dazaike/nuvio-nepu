@@ -151,7 +151,7 @@ function toStremio(s, origin) {
     name: s.name,
     title: s.title,
     description: s.description,
-    url: lazy ? origin + '/play/' + s.url.slice('nepu-lazy:'.length) + '.m3u8' : s.url,
+    url: lazy ? origin + '/play/' + Buffer.from(decodeURIComponent(s.url.slice('nepu-lazy:'.length))).toString('base64url') + '.m3u8' : s.url,
     behaviorHints: { notWebReady: true, bingeGroup: 'nepu-' + s.quality }
   };
   if (!lazy) o.behaviorHints.proxyHeaders = { request: s.headers };
@@ -169,15 +169,39 @@ function playSandbox() {
   return (playSb = sb);
 }
 
-async function playlistFor(token) {
-  const [id, pageUrl] = decodeURIComponent(token).split('|');
-  if (!/^\d+$/.test(id || '') || !/^https:\/\/nepu\.is\/(movie|show)\//.test(pageUrl || '')) return null;
-  const sb = playSandbox();
-  sb.applyAppSettings();
-  const relay = await sb.relayUrl(id, pageUrl);
-  let text = relay ? await sb.siteText(relay, { headers: { Referer: pageUrl } }, 'playlist') : '';
-  if (text.indexOf('#EXTM3U') !== 0) { cacheDel(pageUrl); return { error: relay ? 'playlist request failed' : 'no relay url (page may be outdated)' }; }
-  return { text };
+// Token = base64url("<embed id>|<page url>"): only [A-Za-z0-9_-], so nothing in the player's stack can decode or split it. (A first version
+// put the percent-encoded URL in the path; something on the TV decoded it to "/play/123|https://nepu.is/..." and got a 404.)
+// The decoded legacy form is still accepted.
+function parseToken(token) {
+  let raw = token;
+  if (/^[A-Za-z0-9_-]+$/.test(token)) raw = Buffer.from(token, 'base64url').toString('utf8');
+  else { try { raw = decodeURIComponent(token); } catch (e) { /* keep as is */ } }
+  const i = raw.indexOf('|');
+  const id = raw.slice(0, i), pageUrl = raw.slice(i + 1);
+  return i > 0 && /^\d+$/.test(id) && /^https:\/\/nepu\.is\/(movie|show)\//.test(pageUrl) ? { id, pageUrl } : null;
+}
+
+// One tap makes the player ask several times within a second or two (size probe, ranged reads, the real read). Each used to create its own
+// playlist (~1.5 s each); now they share one. Segment links stay valid far longer than this window (measured: still fine after 5 minutes).
+const PLAY_TTL = 60 * 1000;
+const playCache = new Map();
+function playlistFor(token) {
+  const t = parseToken(token);
+  if (!t) return Promise.resolve(null);
+  const hit = playCache.get(token);
+  if (hit && Date.now() - hit.t < PLAY_TTL) return hit.p;
+  const p = (async () => {
+    const sb = playSandbox();
+    sb.applyAppSettings();
+    const relay = await sb.relayUrl(t.id, t.pageUrl);
+    const text = relay ? await sb.siteText(relay, { headers: { Referer: t.pageUrl } }, 'playlist') : '';
+    if (text.indexOf('#EXTM3U') !== 0) { cacheDel(t.pageUrl); return { error: relay ? 'playlist request failed' : 'no relay url (page may be outdated)' }; }
+    return { text };
+  })();
+  playCache.set(token, { t: Date.now(), p });
+  p.then(r => { if (!r.text) playCache.delete(token); }, () => playCache.delete(token));
+  for (const [k, v] of playCache) if (Date.now() - v.t > PLAY_TTL) playCache.delete(k);
+  return p;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -209,7 +233,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, '');
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/manifest.json') return send(res, 200, MANIFEST);
-    const pm = /^\/play\/([^/]+)\.m3u8$/.exec(url.pathname);
+    const pm = /^\/play\/(.+?)\.m3u8$/.exec(url.pathname);
     if (pm) {
       const r = await playlistFor(pm[1]);
       console.log('[' + new Date().toTimeString().slice(0, 8) + '] play -> ' + (r && r.text ? 'playlist ' + (r.text.length >> 10) + ' KB' : (r && r.error) || 'bad token') + ', ' + (Date.now() - t0) + ' ms');
