@@ -9,6 +9,8 @@
 //   * Node's keep-alive connections to nepu.is (the plugin in the app opens a fresh one per request)
 'use strict';
 const http = require('http'), fs = require('fs'), path = require('path'), vm = require('vm'), zlib = require('zlib'), crypto = require('crypto'), os = require('os');
+// The Cloudflare cookie belongs to the home IPv4 address. Without this, Node can reach nepu.is over IPv6 on a dual-stack network and get a 403.
+require('dns').setDefaultResultOrder('ipv4first');
 
 const PROVIDER = path.join(__dirname, '..', 'providers', 'nepu.js');
 let cfg = {};
