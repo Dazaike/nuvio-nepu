@@ -1,0 +1,22 @@
+# Android init services for the Nepu addon. Same style as /system/etc/init/sleepfix.rc.
+# Not "oneshot": init restarts a service that exits or crashes (after ~5 s), exactly like audiowatch / tvfixd.
+# Runs as the Termux app user (uid 10066 = u0_a66), NOT root: the addon listens on the LAN. "group inet" = permission to open sockets.
+
+service nepu /system/bin/sh /system/bin/nepu-start.sh
+    class late_start
+    user 10066
+    group inet
+    disabled
+
+on property:sys.boot_completed=1
+    start nepu
+
+# Optional: Termux sshd (port 8022) so you can log in without opening the Termux app. Delete this block if you do not want it.
+service nepussh /system/bin/sh /system/bin/nepu-ssh.sh
+    class late_start
+    user 10066
+    group inet
+    disabled
+
+on property:sys.boot_completed=1
+    start nepussh

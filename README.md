@@ -70,3 +70,19 @@ Measured behaviour of the relay URL (Node, same IP as the cookie):
 * The player fetches the playlist once. If it is slow to start (> ~6 min after the list was shown) the URL has expired: reopen the title.
 * No subtitles yet (nepu has a cached-subtitle endpoint, not wired up).
 * Season/episode numbers are nepu's own; they follow TMDB for normal shows but can differ for anime.
+
+## Start at boot and restart on crash (TV box with root)
+
+`addon/boot/` holds three files in the style of Android init services (`/system/etc/init/*.rc`). An init service that is not `oneshot` is
+restarted automatically when it exits or crashes. They run as the Termux app user (uid 10066 on the author's box; check with
+`dumpsys package com.termux | grep userId`), not as root.
+
+    adb root && adb remount
+    adb push addon/boot/nepu-start.sh addon/boot/nepu-ssh.sh /system/bin/
+    adb push addon/boot/nepu.rc /system/etc/init/
+    adb shell chmod 755 /system/bin/nepu-start.sh /system/bin/nepu-ssh.sh
+    adb shell chmod 644 /system/etc/init/nepu.rc
+    adb reboot
+
+Remove the `nepussh` block from `nepu.rc` if you do not want Termux sshd started at boot. Logs: `~/nepu-addon.log` (Termux home) and `logcat -s nepu`.
+After `git pull` on the box, the addon code updates on the next restart (`kill` its pid: init starts it again).
