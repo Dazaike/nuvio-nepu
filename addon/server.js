@@ -207,6 +207,43 @@ function playlistFor(token) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
+// Segment proxy. The CDN ties each segment link to the IP that created the playlist (measured on the TV box: same link gives 206 over IPv4
+// and 403 over IPv6, and the Nuvio TV app's player connects over IPv6 when it can). So the playlist handed to the player points at THIS
+// server, which fetches the segment from the CDN over IPv4 only and streams it through, Range requests included.
+// ---------------------------------------------------------------------------------------------------------------------------
+const https = require('https');
+const segAgent = new https.Agent({ keepAlive: true, family: 4, maxSockets: 32 });
+const SEG_RE = /^https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*\.maho-cdn\.com)\/cdn-m3u8\?payload=([A-Za-z0-9._~-]+)$/;
+function rewriteSegments(text, origin) {
+  let direct = 0;
+  const out = text.split('\n').map(l => {
+    const t = l.trim();
+    if (!t || t[0] === '#') return l;
+    const m = SEG_RE.exec(t);
+    if (m) return origin + '/s/' + m[1] + '/' + m[2];
+    direct++;
+    return l;
+  }).join('\n');
+  if (direct) console.log('    warning: ' + direct + ' playlist line(s) did not match the CDN pattern and were left pointing at the CDN');
+  return out;
+}
+function proxySegment(req, res, host, payload) {
+  if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.maho-cdn\.com$/.test(host) || !/^[A-Za-z0-9._~-]+$/.test(payload)) return send(res, 400, 'bad segment');
+  const headers = {};
+  if (req.headers.range) headers.Range = req.headers.range;
+  const up = https.request({ host, path: '/cdn-m3u8?payload=' + payload, method: req.method === 'HEAD' ? 'HEAD' : 'GET', agent: segAgent, headers }, ur => {
+    const h = { 'Cache-Control': 'no-store' };
+    for (const k of ['content-type', 'content-length', 'content-range', 'accept-ranges']) if (ur.headers[k]) h[k] = ur.headers[k];
+    res.writeHead(ur.statusCode, h);
+    ur.pipe(res);
+  });
+  up.setTimeout(30000, () => up.destroy(new Error('timeout')));
+  up.on('error', e => { if (!res.headersSent) send(res, 502, 'upstream ' + (e.code || e.message)); else res.destroy(); });
+  res.on('close', () => { if (!res.writableFinished) up.destroy(); });
+  up.end();
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------------------------------------------------------
 const MANIFEST = {
@@ -229,7 +266,7 @@ function send(res, status, obj) {
 const server = http.createServer(async (req, res) => {
   const t0 = Date.now();
   // access log: one line per request, so a failing player can be diagnosed from the log alone
-  res.on('finish', () => console.log('  req ' + req.method + ' ' + String(req.url).slice(0, 70) + ' -> ' + res.statusCode + ' (' + (Date.now() - t0) + ' ms) ua=' + String(req.headers['user-agent'] || '-').slice(0, 40) + (req.headers.range ? ' range=' + req.headers.range : '') + (req.headers['accept-encoding'] ? ' ae=' + req.headers['accept-encoding'] : '') + ' bytes=' + (res.getHeader('content-length') || '?')));
+  res.on('finish', () => { if (/^\/s\//.test(req.url) && res.statusCode < 400) return; console.log('  req ' + req.method + ' ' + String(req.url).slice(0, 70) + ' -> ' + res.statusCode + ' (' + (Date.now() - t0) + ' ms) ua=' + String(req.headers['user-agent'] || '-').slice(0, 40) + (req.headers.range ? ' range=' + req.headers.range : '') + (req.headers['accept-encoding'] ? ' ae=' + req.headers['accept-encoding'] : '') + ' bytes=' + (res.getHeader('content-length') || '?')); });
   res.on('close', () => { if (!res.writableFinished) console.log('  req ' + req.method + ' ' + String(req.url).slice(0, 70) + ' ABORTED by client after ' + (Date.now() - t0) + ' ms'); });
   try {
     if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -241,10 +278,12 @@ const server = http.createServer(async (req, res) => {
       console.log('[' + new Date().toTimeString().slice(0, 8) + '] play -> ' + (r && r.text ? 'playlist ' + (r.text.length >> 10) + ' KB' : (r && r.error) || 'bad token') + ', ' + (Date.now() - t0) + ' ms');
       if (!r || !r.text) return send(res, r ? 502 : 400, r ? r.error : 'bad token');
       // Sent as-is, never compressed: some players ask for gzip themselves and then do not decompress (ExoPlayer: "Input does not start with the #EXTM3U header").
-      const body = Buffer.from(r.text, 'utf8');
+      const body = Buffer.from(rewriteSegments(r.text, 'http://' + (req.headers.host || ('127.0.0.1:' + PORT))), 'utf8');
       res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Content-Length': body.length, 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
       return res.end(body);
     }
+    const sm = /^\/s\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+    if (sm) return proxySegment(req, res, sm[1], sm[2]);
     const m = /^\/stream\/(movie|series)\/(.+)\.json$/.exec(url.pathname);
     if (m) {
       const r = await streamsFor(m[1], m[2]);
