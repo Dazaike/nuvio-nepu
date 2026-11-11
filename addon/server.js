@@ -229,7 +229,7 @@ function send(res, status, obj) {
 const server = http.createServer(async (req, res) => {
   const t0 = Date.now();
   // access log: one line per request, so a failing player can be diagnosed from the log alone
-  res.on('finish', () => console.log('  req ' + req.method + ' ' + String(req.url).slice(0, 70) + ' -> ' + res.statusCode + ' (' + (Date.now() - t0) + ' ms) ua=' + String(req.headers['user-agent'] || '-').slice(0, 40) + (req.headers.range ? ' range=' + req.headers.range : '')));
+  res.on('finish', () => console.log('  req ' + req.method + ' ' + String(req.url).slice(0, 70) + ' -> ' + res.statusCode + ' (' + (Date.now() - t0) + ' ms) ua=' + String(req.headers['user-agent'] || '-').slice(0, 40) + (req.headers.range ? ' range=' + req.headers.range : '') + (req.headers['accept-encoding'] ? ' ae=' + req.headers['accept-encoding'] : '') + ' bytes=' + (res.getHeader('content-length') || '?')));
   res.on('close', () => { if (!res.writableFinished) console.log('  req ' + req.method + ' ' + String(req.url).slice(0, 70) + ' ABORTED by client after ' + (Date.now() - t0) + ' ms'); });
   try {
     if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -240,10 +240,10 @@ const server = http.createServer(async (req, res) => {
       const r = await playlistFor(pm[1]);
       console.log('[' + new Date().toTimeString().slice(0, 8) + '] play -> ' + (r && r.text ? 'playlist ' + (r.text.length >> 10) + ' KB' : (r && r.error) || 'bad token') + ', ' + (Date.now() - t0) + ' ms');
       if (!r || !r.text) return send(res, r ? 502 : 400, r ? r.error : 'bad token');
-      const h = { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
-      if (/\bgzip\b/.test(req.headers['accept-encoding'] || '')) { h['Content-Encoding'] = 'gzip'; res.writeHead(200, h); return res.end(zlib.gzipSync(r.text)); }
-      res.writeHead(200, h);
-      return res.end(r.text);
+      // Sent as-is, never compressed: some players ask for gzip themselves and then do not decompress (ExoPlayer: "Input does not start with the #EXTM3U header").
+      const body = Buffer.from(r.text, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Content-Length': body.length, 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
+      return res.end(body);
     }
     const m = /^\/stream\/(movie|series)\/(.+)\.json$/.exec(url.pathname);
     if (m) {
