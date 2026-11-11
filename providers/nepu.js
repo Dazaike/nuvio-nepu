@@ -271,5 +271,14 @@ function fetchStreams(tmdbId, mediaType, season, episode) {
     .then(function (out) { return out.length || !DIAGNOSTICS ? out : diagnose(); });
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { getStreams: getStreams, _internals: { parseCaption: parseCaption, parseResults: parseResults, pickMatches: pickMatches, norm: norm, embedIds: embedIds } };
-else global.getStreams = getStreams;
+// Settings screen of the app (gear icon on the plugin row; needs "hasSettings": true in the manifest).
+function onSettings() {
+  return [
+    { type: 'info', label: 'Leave both empty on the computer the built-in values were made for. On another device paste the cookie and User-Agent of THAT device\'s browser (the cookie only works from the connection that earned it).' },
+    { type: 'text', key: 'cf_clearance', label: 'cf_clearance cookie', placeholder: 'paste the cf_clearance value', description: 'Cookie of nepu.is (Cloudflare pass, not a login).' },
+    { type: 'text', key: 'user_agent', label: 'User-Agent', placeholder: 'Mozilla/5.0 ...', description: 'Exact User-Agent of the browser the cookie came from.' }
+  ];
+}
+
+if (typeof module !== 'undefined' && module.exports) module.exports = { getStreams: getStreams, onSettings: onSettings, _internals: { parseCaption: parseCaption, parseResults: parseResults, pickMatches: pickMatches, norm: norm, embedIds: embedIds } };
+else { global.getStreams = getStreams; global.onSettings = onSettings; }

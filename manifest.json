@@ -1,21 +1,18 @@
 {
   "name": "Nepu",
   "author": "local",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "scrapers": [
     {
       "id": "nepu",
       "name": "Nepu",
-      "description": "Movies and TV via nepu.is (HLS): Full HD plus the separate 4K upload when there is one. Needs your own cf_clearance cookie, see providers/nepu.js",
-      "version": "1.0.1",
+      "description": "Movies and TV via nepu.is (HLS): Full HD plus the separate 4K upload when there is one. Cookie of your own browser needed, see the settings (gear) of this plugin.",
+      "version": "1.0.2",
       "author": "local",
       "supportedTypes": ["movie", "tv"],
       "filename": "providers/nepu.js",
       "enabled": true,
-      "settings": [
-        { "key": "cf_clearance", "label": "cf_clearance cookie", "description": "Value of the cf_clearance cookie of nepu.is (Cloudflare pass, not a login). Valid from your IP only.", "placeholder": "paste the cf_clearance value" },
-        { "key": "user_agent", "label": "User-Agent", "description": "The exact User-Agent of the browser the cookie came from.", "placeholder": "Mozilla/5.0 ..." }
-      ],
+      "hasSettings": true,
       "formats": ["m3u8"],
       "contentLanguage": ["en"]
     }
