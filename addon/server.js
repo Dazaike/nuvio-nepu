@@ -202,6 +202,9 @@ function send(res, status, obj) {
 
 const server = http.createServer(async (req, res) => {
   const t0 = Date.now();
+  // access log: one line per request, so a failing player can be diagnosed from the log alone
+  res.on('finish', () => console.log('  req ' + req.method + ' ' + String(req.url).slice(0, 70) + ' -> ' + res.statusCode + ' (' + (Date.now() - t0) + ' ms) ua=' + String(req.headers['user-agent'] || '-').slice(0, 40) + (req.headers.range ? ' range=' + req.headers.range : '')));
+  res.on('close', () => { if (!res.writableFinished) console.log('  req ' + req.method + ' ' + String(req.url).slice(0, 70) + ' ABORTED by client after ' + (Date.now() - t0) + ' ms'); });
   try {
     if (req.method === 'OPTIONS') return send(res, 204, '');
     const url = new URL(req.url, 'http://x');
