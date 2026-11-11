@@ -112,6 +112,7 @@ function runProvider(tmdbId, mediaType, season, episode, touched) {
   sb.global = sb;
   vm.createContext(sb);
   script.runInContext(sb);
+  sb.LAZY_RELAY = true;   // stream rows carry "nepu-lazy:" placeholders; /play/<token> creates the real playlist on demand
   return sb.getStreams(String(tmdbId), mediaType, season ? +season : undefined, episode ? +episode : undefined).then(streams => ({ streams, logs }));
 }
 
@@ -139,14 +140,42 @@ function streamsFor(type, id) {
   return p;
 }
 
-function toStremio(s) {
-  return {
+// "nepu-lazy:<embed id>|<page>" -> a URL on THIS server (same host the client used to reach us, so it works over LAN or Tailscale).
+// The playlist is created when the player asks for it, so nothing expires while the list is on screen, and no cookie headers are
+// needed on the stream: segments live on an open CDN.
+function toStremio(s, origin) {
+  const lazy = s.url.indexOf('nepu-lazy:') === 0;
+  const o = {
     name: s.name,
     title: s.title,
     description: s.description,
-    url: s.url,
-    behaviorHints: { notWebReady: true, bingeGroup: 'nepu-' + s.quality, proxyHeaders: { request: s.headers } }
+    url: lazy ? origin + '/play/' + s.url.slice('nepu-lazy:'.length) + '.m3u8' : s.url,
+    behaviorHints: { notWebReady: true, bingeGroup: 'nepu-' + s.quality }
   };
+  if (!lazy) o.behaviorHints.proxyHeaders = { request: s.headers };
+  return o;
+}
+
+// one long-lived sandbox for /play: only its relayUrl() / siteText() helpers are used
+let playSb = null;
+function playSandbox() {
+  if (playSb) return playSb;
+  const sb = { console: { log: (...a) => { if (VERBOSE) console.log('    [play] ' + a.join(' ')); } }, fetch: makeFetch([]), setTimeout, clearTimeout, SCRAPER_SETTINGS: settings };
+  sb.global = sb;
+  vm.createContext(sb);
+  script.runInContext(sb);
+  return (playSb = sb);
+}
+
+async function playlistFor(token) {
+  const [id, pageUrl] = decodeURIComponent(token).split('|');
+  if (!/^\d+$/.test(id || '') || !/^https:\/\/nepu\.is\/(movie|show)\//.test(pageUrl || '')) return null;
+  const sb = playSandbox();
+  sb.applyAppSettings();
+  const relay = await sb.relayUrl(id, pageUrl);
+  let text = relay ? await sb.siteText(relay, { headers: { Referer: pageUrl } }, 'playlist') : '';
+  if (text.indexOf('#EXTM3U') !== 0) { cacheDel(pageUrl); return { error: relay ? 'playlist request failed' : 'no relay url (page may be outdated)' }; }
+  return { text };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -175,12 +204,22 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, '');
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/manifest.json') return send(res, 200, MANIFEST);
+    const pm = /^\/play\/([^/]+)\.m3u8$/.exec(url.pathname);
+    if (pm) {
+      const r = await playlistFor(pm[1]);
+      console.log('[' + new Date().toTimeString().slice(0, 8) + '] play -> ' + (r && r.text ? 'playlist ' + (r.text.length >> 10) + ' KB' : (r && r.error) || 'bad token') + ', ' + (Date.now() - t0) + ' ms');
+      if (!r || !r.text) return send(res, r ? 502 : 400, r ? r.error : 'bad token');
+      const h = { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
+      if (/\bgzip\b/.test(req.headers['accept-encoding'] || '')) { h['Content-Encoding'] = 'gzip'; res.writeHead(200, h); return res.end(zlib.gzipSync(r.text)); }
+      res.writeHead(200, h);
+      return res.end(r.text);
+    }
     const m = /^\/stream\/(movie|series)\/(.+)\.json$/.exec(url.pathname);
     if (m) {
       const r = await streamsFor(m[1], m[2]);
       console.log('[' + new Date().toTimeString().slice(0, 8) + '] ' + m[1] + ' ' + decodeURIComponent(m[2]) + ' -> ' + r.streams.length + ' stream(s), ' + (Date.now() - t0) + ' ms, ' + r.hits + ' cache hit(s)');
       if (VERBOSE || !r.streams.length) r.logs.forEach(l => console.log('    ' + l));
-      return send(res, 200, { streams: r.streams.map(toStremio) });
+      return send(res, 200, { streams: r.streams.map(s => toStremio(s, 'http://' + (req.headers.host || ('127.0.0.1:' + PORT)))) });
     }
     if (url.pathname === '/') return send(res, 200, 'Nepu addon running. Add this in Nuvio:  http://<this device IP>:' + PORT + '/manifest.json\n');
     send(res, 404, { error: 'not found' });

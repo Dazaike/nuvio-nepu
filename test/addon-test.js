@@ -26,7 +26,8 @@ async function play(s) {
       const j = await r.json();
       row.push(pass + ' ' + (Date.now() - t0) + ' ms / ' + j.streams.length + ' streams');
       if (pass === 'warm' && j.streams.length) {
-        for (const s of j.streams) { const p = await play(s); total++; if (p.startsWith('PASS')) ok++; row.push('   ' + s.name + ': ' + p); }
+        for (const s of j.streams.filter(x => !/^Nepu (ERROR|INFO)/.test(x.name))) { const p = await play(s); total++; if (p.startsWith('PASS')) ok++; row.push('   ' + s.name + ': ' + p); }
+        for (const s of j.streams.filter(x => /^Nepu (ERROR|INFO)/.test(x.name))) row.push('   (diagnostic row) ' + s.name);
       }
     }
     console.log(label.padEnd(26), row.join(' | '));

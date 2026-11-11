@@ -38,6 +38,9 @@ function withTimeout(p, ms, what) {
 // When nothing can be returned, hand back visible "Nepu ERROR: ..." rows so the app shows WHY (Nuvio only displays returned streams, not
 // console logs). Set DIAGNOSTICS = false once everything works.
 var DIAGNOSTICS = true;
+// Addon mode (set by addon/server.js, never in the app): do not create the playlist URL now. The row carries "nepu-lazy:<embed id>|<page>"
+// and the addon creates the playlist only when the player asks for it.
+var LAZY_RELAY = false;
 var problems = [];
 function problem(msg) { problems.push(msg); log('PROBLEM', msg); }
 
@@ -250,6 +253,7 @@ function fetchStreams(tmdbId, mediaType, season, episode) {
           if (!ids.length) { problem('no player on ' + pageUrl.replace(SITE, '')); return []; }
           var label = (p.tag === '4K' ? '4K' : (sourceLabel(html) || 'Full HD')) + (p.n > 1 ? ' (' + p.n + ')' : '');
           return Promise.all(ids.map(function (id) {
+            if (LAZY_RELAY) return deliver('nepu-lazy:' + encodeURIComponent(id + '|' + pageUrl), { label: label, p: p, info: info, isTv: isTv, season: season, episode: episode });
             return relayUrl(id, pageUrl).then(function (url) {
               if (!url) { problem('no relay url for embed ' + id); return null; }
               return deliver(url, { label: label, p: p, info: info, isTv: isTv, season: season, episode: episode });
